@@ -350,7 +350,7 @@ class ScientificCalculator : public ExpressionEvaluator{
     void runInteractiveCalculator() {
         std::string input;
         std::vector<std::string> history;  // Store calculation history
-        const int MAX_HISTORY = 10;        // Maximum history entries to store
+        const int MAX_HISTORY = 20;        // Maximum history entries to store
         
         printWelcomeBanner();
         printHelp();

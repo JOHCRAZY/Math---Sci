@@ -4,7 +4,18 @@
 #include <cmath>
 #include <stdexcept>
 #include <iomanip>
+#include <map>
+#include <string>
+#include <stack>
+#include <cctype>
+#include <sstream>
+#include <muParser.h> //TODO: install muPerser (muparser-2.3.5.zip)
+#include <chrono>
 
+/*
+use: 
+     g++ numerical_integration.cpp -o numerical_integration -lmuparser
+*/
 class NumericalIntegrator {
 private:
     // Function to validate input parameters
@@ -39,7 +50,7 @@ public:
         double result = (f(a) + f(b)) / 2.0;
         
         for (int i = 1; i < n; i++) {
-            result += f(a + i * h);
+            result += 2.0 * f(a + i * h);
         }
         
         return h * result;
@@ -134,117 +145,222 @@ public:
         return R[maxOrder][maxOrder];
     }
 
-    // Adaptive quadrature using Simpson's rule
-    static double adaptiveSimpson(
-        std::function<double(double)> f,
-        double a,
-        double b,
-        double tolerance = 1e-8,
-        int maxDepth = 50
-    ) {
-        auto simpsonRule = [&](double a, double b) {
-            double c = (a + b) / 2;
-            return (b - a) / 6 * (f(a) + 4 * f(c) + f(b));
-        };
+};
 
-        std::function<double(double, double, double, double, int)> adaptive;
-        adaptive = [&](double a, double b, double fa, double fb, int depth) {
-            double c = (a + b) / 2;
-            double fc = f(c);
-            double s = simpsonRule(a, b);
-            double s1 = simpsonRule(a, c);
-            double s2 = simpsonRule(c, b);
-            double diff = std::abs(s1 + s2 - s);
 
-            if (depth > maxDepth) {
-                return s1 + s2;
-            }
+// Function to parse mathematical expressions using muParser
+std::function<double(double)> parseFunction(const std::string& expression) {
+    return [expression](double x) {
+        mu::Parser parser;
+        parser.SetExpr(expression);
+        parser.DefineVar("x", &x); // Define 'x' as the variable in the expression
+        
+        try {
+            return parser.Eval();
+        } catch (mu::ParserError& e) {
+            throw std::invalid_argument(e.GetMsg());
+        }
+    };
+}
 
-            if (diff < 15 * tolerance) {
-                return s1 + s2 + diff / 15;
-            }
-
-            return adaptive(a, c, fa, fc, depth + 1) +
-                   adaptive(c, b, fc, fb, depth + 1);
-        };
-
-        return adaptive(a, b, f(a), f(b), 0);
+class UI {
+private:
+    static void clearScreen() {
+        #ifdef _WIN32
+            system("cls");
+        #else
+            system("clear");
+        #endif
     }
 
-    // Error estimation
-    static double estimateError(
-        std::function<double(double)> f,
-        double a,
-        double b,
-        double actualValue,
-        const std::string& method,
-        int n
-    ) {
-        double numericalResult;
-        
-        if (method == "trapezoidal") {
-            numericalResult = trapezoidal(f, a, b, n);
-        } else if (method == "simpsons") {
-            numericalResult = simpsons(f, a, b, n);
-        } else if (method == "rectangular") {
-            numericalResult = rectangular(f, a, b, n);
-        } else {
-            throw std::invalid_argument("Unknown method for error estimation");
+    static void showProgressBar(int progress, int total) {
+        const int barWidth = 50;
+        float ratio = static_cast<float>(progress) / total;
+        int pos = static_cast<int>(barWidth * ratio);
+
+        std::cout << "[";
+        for (int i = 0; i < barWidth; ++i) {
+            if (i < pos) std::cout << "=";
+            else if (i == pos) std::cout << ">";
+            else std::cout << " ";
         }
-        
-        return std::abs(actualValue - numericalResult);
+        std::cout << "] " << int(ratio * 100.0) << "%\r";
+        std::cout.flush();
+    }
+
+public:
+    static void displayHeader() {
+        clearScreen();
+        std::cout << "╔════════════════════════════════════════════╗\n";
+        std::cout << "║       Numerical Integration                ║\n";
+        std::cout << "╚════════════════════════════════════════════╝\n\n";
+    }
+
+    static void displayMethodMenu() {
+        std::cout << "\nAvailable Integration Methods:\n";
+        std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        std::cout << "1. Trapezoidal Rule\n";
+        std::cout << "2. Rectangular Rule\n";
+        std::cout << "3. Simpson's Rule 1/8\n";
+        std::cout << "4. Simpson's Rule 3/8\n";
+        std::cout << "5. Boole's Rule\n";
+        std::cout << "6. Romberg Integration\n";
+        std::cout << "0. Exit Program\n";
+        std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    }
+
+    static void displayResult(std::string func,double result, const std::string& method, 
+                            double a, double b, int n, double executionTime) {
+        std::cout << "\n╔════════════════════════════════════════════╗\n";
+        std::cout << "║              Integration Result            ║\n";
+        std::cout << "╚════════════════════════════════════════════╝\n\n";
+        std::cout << "Method: " << method << "\n";
+        std::cout << "Function f(x): " << func << "\n";
+        std::cout << "Interval: [" << a << ", " << b << "]\n";
+        std::cout << "Subintervals: " << n << "\n";
+        std::cout << "Result: " << std::fixed << std::setprecision(8) << result << "\n";
+        std::cout << "Execution time: " << std::fixed << std::setprecision(3) 
+                 << executionTime << " ms\n\n";
+    }
+
+    static void showCalculationProgress(int current, int total) {
+        showProgressBar(current, total);
     }
 };
 
-// Example usage
+class InputValidator {
+public:
+    static double getValidDouble(const std::string& prompt) {
+        double value;
+        while (true) {
+            std::cout << prompt;
+            if (std::cin >> value) {
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                return value;
+            }
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cout << "Invalid input. Please enter a valid number.\n";
+        }
+    }
+
+    static int getValidInt(const std::string& prompt, int min = 1, int max = std::numeric_limits<int>::max()) {
+        int value;
+        while (true) {
+            std::cout << prompt;
+            if (std::cin >> value && value >= min && value <= max) {
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                return value;
+            }
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cout << "Invalid input. Please enter a number between " << min << " and " << max << ".\n";
+        }
+    }
+
+    static std::string getValidFunction() {
+        std::string funcExpr;
+        std::cout << "Enter a mathematical function using x as variable\n";
+        std::cout << "Examples: sin(x), x^2 + 2*x, exp(x)\n";
+        std::cout << "Function: ";
+        std::getline(std::cin, funcExpr);
+        std::cout<<std::endl;
+        return funcExpr;
+    }
+};
+
 int main() {
-    // Test function: f(x) = x^2
-    auto f = [](double x) { return x * x; };
-    double a = 0.0;
-    double b = 1.0;
-    int n = 36;
+    while (true) {
+        try {
+            UI::displayHeader();
+            
+            // Get function expression
+            std::string funcExpr = InputValidator::getValidFunction();
+            
+            // Get integration bounds
+            double a = InputValidator::getValidDouble("Enter lower bound (a): ");
+            double b = InputValidator::getValidDouble("Enter upper bound (b): ");
+            
+            if (a >= b) {
+                throw std::runtime_error("Lower bound must be less than upper bound!");
+            }
+            
+            // Get number of subintervals
+            int n = InputValidator::getValidInt("Enter number of subintervals (1-1000000): ", 1, 1000000);
+            
+            // Display method menu and get choice
+            UI::displayMethodMenu();
+            int methodChoice = InputValidator::getValidInt("Select method (0-6): ", 0, 6);
+            
+            if (methodChoice == 0) {
+                std::cout << "Exit!\n";
+                break;
+            }
+            
+            // Parse the function
+            auto f = parseFunction(funcExpr);
+            
+            // Create integrator and get method
+            NumericalIntegrator integrator;
+            std::string methodName;
+            std::function<double(std::function<double(double)>, double, double, int)> method;
+            
+            switch (methodChoice) {
+                case 1:
+                    method = integrator.trapezoidal;
+                    methodName = "Trapezoidal Rule";
+                    break;
+                case 2:
+                    method = integrator.rectangular;
+                    methodName = "Rectangular Rule";
+                    break;
+                case 3:
+                    method = integrator.simpsons;
+                    methodName = "Simpson's Rule 1/8";
+                    break;
+                case 4:
+                    method = integrator.simpsons38;
+                    methodName = "Simpson's Rule 3/8";
+                    break;
+                case 5:
+                    method = integrator.booles;
+                    methodName = "Boole's Rule";
+                    break;
+                case 6:
+                    method = integrator.romberg;
+                    methodName = "Romberg Integration";
+                    break;
+                default:
+                    throw std::runtime_error("Invalid method choice");
+            }
+            
+            // Calculate with progress indication
+            std::cout << "\nCalculating...\n";
+            auto start = std::chrono::high_resolution_clock::now();
+            
+            double result = method(f, a, b, n);
+            
+            auto end = std::chrono::high_resolution_clock::now();
+            double executionTime = std::chrono::duration<double, std::milli>(end - start).count();
+            
+            UI::displayResult(funcExpr,result, methodName, a, b, n, executionTime);
+            
+            // Ask to continue
+            char continueChoice;
+            std::cout << "Would you like to continue? (y/n): ";
+            std::cin >> continueChoice;
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            
+            if (std::tolower(continueChoice) != 'y') {
+                std::cout << "Quit!\n";
+                break;
+            }
 
-    // Known analytical result for integral of x^2 from 0 to 1 is 1/3
-    double actual = 1.0 / 3.0;
-
-    try {
-        std::cout << std::fixed << std::setprecision(10);
-        std::cout << "Integrating f(x) = x^2 from " << a << " to " << b << "\n\n";
-
-        // Compare different methods
-        std::cout << "Rectangular method: " 
-                  << NumericalIntegrator::rectangular(f, a, b, n) << "\n";
-        
-        std::cout << "Trapezoidal rule:  " 
-                  << NumericalIntegrator::trapezoidal(f, a, b, n) << "\n";
-        
-        std::cout << "Simpson's rule:    " 
-                  << NumericalIntegrator::simpsons(f, a, b, n) << "\n";
-        
-        std::cout << "Simpson's 3/8:     " 
-                  << NumericalIntegrator::simpsons38(f, a, b, n) << "\n";
-        
-        std::cout << "Boole's rule:      " 
-                  << NumericalIntegrator::booles(f, a, b, n) << "\n";
-        
-        std::cout << "Romberg (order 4): " 
-                  << NumericalIntegrator::romberg(f, a, b, 4) << "\n";
-        
-        std::cout << "Adaptive Simpson:  " 
-                  << NumericalIntegrator::adaptiveSimpson(f, a, b) << "\n";
-        
-        std::cout << "\nActual value:      " << actual << "\n";
-
-        // Error estimation
-        std::cout << "\nError estimation:\n";
-        std::cout << "Trapezoidal error: " 
-                  << NumericalIntegrator::estimateError(f, a, b, actual, "trapezoidal", n) << "\n";
-        std::cout << "Simpson's error:   " 
-                  << NumericalIntegrator::estimateError(f, a, b, actual, "simpsons", n) << "\n";
-
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
-        return 1;
+        } catch (const std::exception& e) {
+            std::cerr << "\nError: " << e.what() << "\n\n";
+            std::cout << "Press Enter to continue...";
+            std::cin.get();
+        }
     }
 
     return 0;

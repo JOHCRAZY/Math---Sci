@@ -4,11 +4,15 @@
 #include <iomanip>
 #include <vector>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
+
+using namespace std;
 
 class PiEstimator {
 private:
-    std::mt19937_64 generator;
-    std::uniform_real_distribution<double> distribution;
+    mt19937_64 generator;
+    uniform_real_distribution<double> distribution;
     
     // Structure to store results for visualization
     struct Point {
@@ -57,9 +61,9 @@ private:
 public:
     PiEstimator() {
         // Seed the generator with current time
-        auto seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        auto seed = chrono::high_resolution_clock::now().time_since_epoch().count();
         generator.seed(seed);
-        distribution = std::uniform_real_distribution<double>(0.0, 1.0);
+        distribution = uniform_real_distribution<double>(0.0, 1.0);
     }
     
     // Multi-threaded estimation with progress tracking
@@ -68,8 +72,8 @@ public:
             return estimateSingleThread(totalPoints);
         }
         
-        std::vector<std::thread> threads;
-        std::vector<unsigned long long> results(numThreads);
+        vector<std::thread> threads;
+        vector<unsigned long long> results(numThreads);
         unsigned long long pointsPerThread = totalPoints / numThreads;
         
         // Launch threads
@@ -81,7 +85,7 @@ public:
         
         // Show progress while waiting
         if (showProgress) {
-            std::cout << "Estimating Pi using " << numThreads << " threads:\n";
+            cout << "Estimating Pi using " << numThreads << " threads:\n";
             for (int i = 0; i < 50; ++i) {
                 std::cout << "-";
             }
@@ -102,72 +106,122 @@ public:
         return 4.0 * totalInside / (pointsPerThread * numThreads);
     }
     
-    // Get sample points for visualization
-    std::vector<Point> getSamplePoints(int numPoints) {
-        std::vector<Point> points;
-        points.reserve(numPoints);
-        
-        for (int i = 0; i < numPoints; ++i) {
-            double x = distribution(generator);
-            double y = distribution(generator);
-            bool inside = isInsideQuarterCircle(x, y);
-            points.push_back({x, y, inside});
-        }
-        
-        return points;
-    }
-    
-    // ASCII visualization of the estimation
-    void visualize(int size = 20) {
-        std::vector<std::vector<char>> grid(size, std::vector<char>(size, ' '));
-        auto points = getSamplePoints(size * size / 2);
-        
-        // Plot points
-        for (const auto& point : points) {
-            int x = static_cast<int>(point.x * (size - 1));
-            int y = static_cast<int>(point.y * (size - 1));
-            grid[y][x] = point.inside ? '*' : '.';
-        }
-        
-        // Draw the grid
-        std::cout << "\nVisualization of Monte Carlo estimation:\n";
-        std::cout << std::string(size + 2, '-') << '\n';
-        for (int i = size - 1; i >= 0; --i) {
-            std::cout << '|';
-            for (int j = 0; j < size; ++j) {
-                std::cout << grid[i][j];
-            }
-            std::cout << "|\n";
-        }
-        std::cout << std::string(size + 2, '-') << '\n';
-    }
 };
 
+class Loading {
+    private:
+        bool running;
+        thread animationThread;
+        mutex mtx;
+        condition_variable cv;
+        const vector<std::string> frames = {
+            "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+        };
+        
+    public:
+        Loading() : running(false) {}
+        
+        void start(const string& message) {
+            running = true;
+            animationThread = thread([this, message]() {
+                int frame = 0;
+                auto lastUpdate = chrono::steady_clock::now();
+                
+                while (running) {
+                    auto now = chrono::steady_clock::now();
+                    if (chrono::duration_cast<chrono::milliseconds>(now - lastUpdate).count() >= 80) {
+                        // Clear the current line
+                        cout << "\r" << string(80, ' ') << "\r";
+                        cout << frames[frame] << " " << message << flush;
+                        
+                        frame = (frame + 1) % frames.size();
+                        lastUpdate = now;
+                    }
+                    
+                    // Sleep to prevent high CPU usage
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            });
+        }
+        
+        void stop() {
+            running = false;
+            if (animationThread.joinable()) {
+                animationThread.join();
+            }
+            // Clear the animation line
+            cout << "\r" << string(80, ' ') << "\r" << flush;
+        }
+        
+        ~Loading() {
+            stop();
+        }
+    };
+
+// Function to format large numbers with commas
+string formatNumber(unsigned long long n) {
+    string number = to_string(n);
+    int insertPosition = number.length() - 3;
+    while (insertPosition > 0) {
+        number.insert(insertPosition, ",");
+        insertPosition -= 3;
+    }
+    return number;
+}
+
+
+    void calculatePi(unsigned long long numPoints = 1000000000) {
+        PiEstimator estimator;
+        unsigned int numThreads = thread::hardware_concurrency();
+        
+        
+        cout << "\n╔══════════════════════════════════════════╗" << std::endl;
+        cout << "║         Monte Carlo Pi Estimation        ║" << std::endl;
+        cout << "╚══════════════════════════════════════════╝\n" << std::endl;
+
+        cout<<"Enter number of points: ";
+        cin>>numPoints;
+
+        // Format the number of points with commas
+        string formattedPoints = formatNumber(numPoints);
+        
+        cout << "Configuration:" << std::endl;
+        cout << "• Points:  " << formattedPoints << std::endl;
+        cout << "• Threads: " << numThreads << std::endl;
+        
+        // Create and start the loading animation
+        Loading loader;
+        std::string loadingMessage = "Estimating Pi using " + formattedPoints + " points...";
+        loader.start(loadingMessage);
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        // Perform the estimation
+        double estimatedPi = estimator.estimate(numPoints, numThreads);
+        
+        // Stop timing
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        
+        loader.stop();
+        
+        // Calculate error
+        double error = abs(estimatedPi - M_PI);
+        double errorPercentage = (error / M_PI) * 100;
+        
+        // Display results with a nice format
+        cout << "\nResults:" << endl;
+        cout << "╭──────────────────── ──────────────────────╮" << endl;
+        cout << "│ Estimated π: " << setw(28) << setprecision(10) << fixed << estimatedPi << " │" << endl;
+        cout << "│ Actual π:    " << setw(28) << M_PI << " │" << endl;
+        cout << "│ Error:       " << setw(28) << error << " │" << endl;
+        cout << "│ Error (%):   " << setw(27) << setprecision(4) << fixed  << errorPercentage << "% │" << std::endl;
+        cout << "│ Time taken:        " << setw(14) << setprecision(2) << fixed << duration.count() / 1000.0 << " seconds │" << endl;
+        cout << "╰──────────────────── ──────────────────────╯" << endl;
+    }
+
+
 int main() {
-    PiEstimator estimator;
-    
-    // Parameters
-    unsigned long long numPoints = 1000000000;  // 1 billion points
-    unsigned int numThreads = std::thread::hardware_concurrency();  // Use all available cores
-    
-    // Estimate Pi
-    std::cout << "Estimating Pi using " << numPoints << " points...\n";
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    double estimatedPi = estimator.estimate(numPoints, numThreads);
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    
-    // Show results
-    std::cout << "\nResults:\n";
-    std::cout << "Estimated Pi: " << std::setprecision(10) << estimatedPi << "\n";
-    std::cout << "Actual Pi:    " << std::setprecision(10) << M_PI << "\n";
-    std::cout << "Error:        " << std::setprecision(10) << std::abs(estimatedPi - M_PI) << "\n";
-    std::cout << "Time taken:   " << duration.count() / 1000.0 << " seconds\n\n";
-    
-    // Show visualization
-    estimator.visualize();
-    
+    calculatePi();
     return 0;
 }
